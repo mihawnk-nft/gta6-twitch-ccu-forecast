@@ -446,8 +446,18 @@ Final-case sanity check (synthetic h1 = 1.0M): v4 h20 median 1.67M
 (q05 0.94M, q95 2.95M) — same as v3, as expected from a small change.
 Runtime 0.28 s/case (limit 8 s).
 
-**Shipped v4: practice 0.1532, LOOCV 0.3949, rolling LOOCV 0.4403**
-(v3: 0.1534 / 0.3958 / 0.4414). Gap to rank 20 (0.120) is still 0.033;
-to rank 1 (0.0975) 0.056. Every direction from Grok + Gemini is now
-tested: only circadian shipped. What is left is a genuinely new signal
-class (e.g. modelling the unlock wave itself) or accepting v4 as final.
+**v4 ready but NOT submitted (quota): practice 0.1532, LOOCV 0.3949,
+rolling LOOCV 0.4403** (v3: 0.1534 / 0.3958 / 0.4414). Submit attempt
+17 Nov ~17:53 WIB REFUSED (HTTP 429): the account's day cap for this
+competition was lowered by reputation to 3 and all 3 are used
+(v1+v2+v3); the quota endpoint says day cap 3/3 taken, left 0,
+resets 2026-11-18T00:00:00Z (07:00 WIB 18 Nov), hard limit 20 left 17,
+competition total withheld. A quota refusal never counts against the
+cap. RETRY: submit the already-built bundle
+/tmp/gta6-bundle-v4.tar.gz (sha256 be7d37c6...) at commit 71790fa
+after 07:00 WIB 18 Nov — if the (withheld) competition total still
+has room. Entries close 19 Nov 08:00 WIB. Gap to rank 20 (0.120) is
+still 0.033; to rank 1 (0.0975) 0.056. Every direction from Grok +
+Gemini is now tested: only circadian passed the dual gate. What is
+left is a genuinely new signal class (e.g. modelling the unlock wave
+itself) or accepting v4 as final.
