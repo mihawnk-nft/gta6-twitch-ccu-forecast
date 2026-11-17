@@ -300,3 +300,83 @@ does the heavy lifting for the rolling-midnight rise.
 final is one case at a far larger hour 1, where the floor + kernel
 design is strongest — but the gap to the top (0.122) is real and
 remains.
+
+## 8. v3 iteration (17 Nov 2026) — new directions, not spread/kernel/floor
+
+Leaderboard at 17:26 WIB (3,226 entries): rank 1 = 0.0975
+("kernel-weighted log-ratio + per-hour calibration"), rank 20 = 0.122,
+our v2 = #264 at 0.154. Top titles cluster on "per-hour calibration /
+hour bias", ensembles, "dip-depth evening term", and "2-D local-linear"
+(#15, 0.119). Every direction below was tested one at a time on the
+4 practice cases AND on LOOCV over the 37 comparables; a change had
+to win on practice AND on LOOCV to ship. Harness:
+`~/workspace/makefun/gta6-verify/exp3.py` (+ exp3_batch1-4.py).
+
+The structural finding of this round: the four practice cases and the
+37 comparables want OPPOSITE evening corrections. Base v2 median
+residuals at h18: practice +0.310 (model under-predicts the evening
+peak of rolling-midnight launches) vs LOOCV -0.235 (model
+over-predicts it for the average comparable, dominated by
+simultaneous global launches). Any correction calibrated on the
+practice cases therefore fails LOOCV, and vice versa — including on
+the rolling LOOCV subset (peak/h1 >= 1.5). The practice cases are a
+distinct subpopulation (recent prestige console launches), not just
+"rolling launches".
+
+| change | practice | LOOCV mean | LOOCV 20k | ROLL | verdict |
+|---|---:|---:|---:|---:|---|
+| v2 (shipped) | 0.1543 | 0.3972 | 0.2805 | 0.4438 | baseline |
+| per-hour bias, practice-cal. shrink 0.5 | 0.1499 | 0.4053 | 0.2905 | 0.4515 | REJECT (LOOCV) |
+| per-hour bias, practice-cal. shrink 1.0 | 0.1521 | 0.4209 | 0.3091 | 0.4667 | REJECT (LOOCV) |
+| per-hour bias, LOOCV-cal. shrink 0.5 | 0.1636 | 0.3968 | 0.2741 | 0.4437 | REJECT (practice) |
+| evening-only bias h>=17 shrink 0.5 | 0.1496 | 0.4023 | 0.2877 | 0.4490 | REJECT (LOOCV+roll) |
+| evening-only bias h>=17 shrink 1.0 | 0.1470 | 0.4099 | 0.2975 | 0.4567 | REJECT (LOOCV+roll) |
+| tier soft weight (weak/EA 0.5) | 0.1497 | 0.4039 | 0.2889 | 0.4509 | REJECT (LOOCV) |
+| 2-D kernel premax_ratio bw 0.5/1.0/2.0 | 0.1482/0.1497/0.1516 | 0.5298/0.4861/0.4152 | — | 0.6117/0.5566/0.4664 | REJECT (LOOCV explodes) |
+| 2-D kernel premax_abs bw 1.0/2.0/3.0 | 0.1617/0.1559/0.1548 | 0.4415/0.4079/0.4012 | — | 0.4971/0.4558/0.4480 | REJECT (LOOCV) |
+| regressor premax / premax_ratio | 0.1527 | 0.4481 | 0.2930 | 0.5074 | REJECT (LOOCV; the two are the same regressor — ratio = absolute minus x, and x is already in the design) |
+| quantile regression (pinball fit) | 0.1814 | 0.3969 | 0.2780 | 0.4361 | REJECT (practice; IRLS unstable on 37 points) |
+| ensemble v2/global 50/50, 70/30 | 0.1608/0.1578 | 0.4050/0.4005 | — | 0.4538/0.4485 | REJECT |
+| kNN + binned (3/4/5 bins) | 0.1930/0.2155/0.2058 | 0.4767/0.4386/0.4124 | — | — | REJECT (binning loses the slope) |
+| slope shrink 0.85/0.7 | 0.1603/0.1713 | 0.4157/0.4688 | — | — | REJECT |
+| smooth medians across hours | 0.1544 | 0.3969 | 0.2804 | 0.4433 | neutral |
+| per-hour spread calibration (two-pass) | 0.1886 | 0.3900 | 0.2806 | 0.4342 | REJECT (practice; grid hits the 1.5x boundary every hour — LOOCV wants wide, practice wants narrow, same trade-off as the spread) |
+| hour-specific bw (1.5 h>=17) | 0.1565 | 0.3956 | 0.2772 | 0.4405 | REJECT (practice) |
+| **PC weight 0.5** | **0.1534** | **0.3959** | **0.2748** | **0.4411** | **SHIP candidate** |
+| **PC weight 0.6** | **0.1534** | **0.3958** | **0.2763** | **0.4414** | **SHIP** |
+| PC weight 0.7 / 0.8 | 0.1535/0.1538 | 0.3961/0.3964 | 0.2775/0.2786 | 0.4419/0.4426 | (same shallow trend) |
+| PC weight 0.0 (console only) | 0.2049 | 0.6849 | 0.3017 | 0.7897 | REJECT (destroys the large-h1 anchors) |
+
+Why PC weight 0.6 ships: it is the only new direction that wins on
+practice AND on LOOCV AND on the rolling subset, with a smooth shallow
+optimum over 0.5-0.8 (not a knife edge). Per-case LOOCV: 21/37
+pseudo-cases improve, median delta -0.0010, and the h1>=20k subset
+(the sizes closest to the final's huge hour 1) improves -0.0042.
+The effect is small (~0.001) but consistent across all four metrics.
+Mechanism: GTA VI is console-only; PC-included launches unlock
+simultaneously worldwide, so their evening shape differs from
+rolling-midnight console launches — down-weighting them slightly
+shifts the fit toward the target's own reference class.
+
+Diagnostics that closed other doors: corr(log premax, log peak) =
+0.224 (weak), but corr(log premax/h1, log peak/h1) = 0.758 (strong) —
+yet the ratio regressor still fails LOOCV, because the regression
+already conditions on h1. corr(dip depth, peak) = 0.103 — the
+"dip-depth evening term" in top titles has no signal in these
+comparables. In-sample per-hour bias on the 4 practice cases reaches
+only 0.1316, far from rank 1's 0.0975, so the leaderboard top is
+fitting the four practice cases much harder than a per-hour bias —
+that fit may or may not transfer to the one final case.
+
+Final-case sanity check (same 38 comparables, synthetic h1 = 1.0M):
+v3 h20 median 1.67M (q05 0.99M, q95 2.82M) — essentially v2's
+forecast, as expected from a 0.6 weight change.
+
+**Shipped v3: practice 0.1534, LOOCV 0.3958, rolling LOOCV 0.4414**
+(v2: 0.1543 / 0.3972 / 0.4438). Still to try, if time allows before
+the 19 Nov 08:00 WIB deadline: nothing on the current list — every
+tested direction is either rejected by the dual gate or already
+shipped. A genuinely new signal would have to come from outside the
+comparables' own curves (e.g. a better model of the unlock wave
+itself, or the GTA VI pre-release series' shape rather than its
+peak).

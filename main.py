@@ -26,6 +26,17 @@ indie launches and million-viewer simultaneous ones.  Bandwidth 2.0
 was chosen on practice + leave-one-out CV (see DATA_ANALYSIS.md);
 the optimum is flat over 1.5-2.5, so the choice is not a knife edge.
 
+The fit is also console-weighted (v3): a comparable whose launch
+included PC gets weight 0.6, a console-only launch gets 1.0.  GTA VI
+launches on consoles only (PS5 + Xbox Series X|S, no PC), and
+PC-included launches unlock simultaneously worldwide, so their
+evening shape differs systematically from rolling-midnight console
+launches.  The 0.6 weight was chosen on practice + LOOCV
+(practice 0.1534 vs 0.1543, LOOCV 0.3958 vs 0.3972, and the
+h1>=20k LOOCV subset improves 0.2805 -> 0.2763); the optimum is
+flat over 0.5-0.8.  A comparable with no platforms field listed
+counts as console (weight 1.0), so missing data falls back to v2.
+
 Two guards keep the regression honest on the final case:
 
 * FLOOR -- a rolling-midnight floor on the median ratio.  GTA VI unlocks
@@ -90,6 +101,9 @@ MIN_CURVES = 5
 # multiplier on the rolling-midnight floor (see DATA_ANALYSIS.md §7).
 KERNEL_BW = 2.0
 FLOOR_FACTOR = 1.15
+# Console weighting (v3, see DATA_ANALYSIS.md §8): a comparable whose
+# launch included PC gets this weight; console-only launches get 1.0.
+PC_WEIGHT = 0.6
 
 # Rolling-midnight floor on the median ratio r_h: 0.85x the smallest
 # ratio at that hour among the four practice launches (Wolverine, RDR2,
@@ -180,14 +194,19 @@ def release_day_curve(comp: dict):
     return vals
 
 
-def fit_params(curves, x0):
+def fit_params(curves, x0, plats=None):
     """Per hour h=2..24: (a_h, b_h, resid_sd) of ln(y_h/y_1) on ln(y_1/REF).
 
     Kernel-weighted least squares around the target's own x0 = ln(p1/REF):
     a comparable with hour-1 print h1 gets weight
     exp(-0.5 * ((ln(h1/REF) - x0) / KERNEL_BW)^2).  A launch far from the
     target's size still counts, but a launch of similar size counts far
-    more.  Returns None when there are too few curves to fit.
+    more.  When plats is given (the comparables' raw 'platforms' strings,
+    parallel to curves), a launch that included PC is further down-weighted
+    by PC_WEIGHT: the target is a console-only launch, and PC-included
+    launches unlock simultaneously worldwide, so their evening shape
+    differs from rolling-midnight console launches.  Returns None when
+    there are too few curves to fit.
     """
     if len(curves) < MIN_CURVES:
         return None
@@ -196,6 +215,9 @@ def fit_params(curves, x0):
         xs = [math.log(v[0] / REF) for v in curves]
         ys = [math.log(v[h - 1] / v[0]) for v in curves]
         ws = [math.exp(-0.5 * ((x - x0) / KERNEL_BW) ** 2) for x in xs]
+        if plats is not None:
+            ws = [w * (PC_WEIGHT if "PC" in (p or "") else 1.0)
+                  for w, p in zip(ws, plats)]
         sw = sum(ws)
         mx = sum(w * x for w, x in zip(ws, xs)) / sw
         my = sum(w * y for w, y in zip(ws, ys)) / sw
@@ -240,11 +262,13 @@ def forecast_case(case: dict, name: str) -> dict:
         raise ValueError(f"{name} has no hour-1 print")
     p1 = max(1.0, float(first["viewers"]))
     curves = []
+    plats = []
     for comp in case.get("comparables") or []:
         vals = release_day_curve(comp)
         if vals is not None:
             curves.append(vals)
-    params = fit_params(curves, math.log(max(p1, 1.0) / REF))
+            plats.append(comp.get("platforms") or "")
+    params = fit_params(curves, math.log(max(p1, 1.0) / REF), plats)
     hours = [
         {"hour": row["hour"], "q": hour_quantiles(p1, row["hour"], params)}
         for row in case["forecast"]
