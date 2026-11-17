@@ -37,6 +37,24 @@ h1>=20k LOOCV subset improves 0.2805 -> 0.2763); the optimum is
 flat over 0.5-0.8.  A comparable with no platforms field listed
 counts as console (weight 1.0), so missing data falls back to v2.
 
+The location is circadian-decomposed (v4): each comparable's
+release-day log-ratio z_{i,h} = ln(y_{i,h}/y_{i,1}) is split into a
+steady-state circadian wave C_{i,h} -- the mean of the same clock
+hour's log-ratios on day 2 and day 3, when every regional unlock is
+complete -- plus a launch-unlock transient T_{i,h} = z_{i,h} - C_{i,h}.
+The wave C_hat_h is the kernel-weighted mean of C_{i,h} across
+comparables (same kernel and PC weight as v3); the transient is fit
+by kernel-weighted ridge regression on ln(p1/100k) (ridge 1.0), and
+the spread is 0.7x the transient residual SD, clamped to [0.25, 1.0].
+This uses hours 25..72 of the comparables, which v2/v3 ignored, and
+is the only v4 direction that wins on practice AND on LOOCV AND on
+the rolling and h1>=20k subsets (practice 0.1532 vs 0.1534, LOOCV
+0.3949 vs 0.3958, 21/37 LOOCV cases improve, median delta -0.0018).
+When fewer than 5 comparables have complete day-2/day-3 curves the
+fit falls back to the v3 regression; when fewer than 5 have a
+complete release-day curve it falls back to the hardcoded
+intercepts, as before.
+
 Two guards keep the regression honest on the final case:
 
 * FLOOR -- a rolling-midnight floor on the median ratio.  GTA VI unlocks
@@ -156,12 +174,13 @@ def _hour_key(value):
     return dt.strftime("%Y-%m-%dT%H:00:00Z")
 
 
-def release_day_curve(comp: dict):
-    """A comparable's 24 hourly viewer counts for its release day (UTC).
+def curve_hours(comp: dict, start_offset: int):
+    """24 hourly viewer counts starting `start_offset` hours after the
+    comparable's release day starts (UTC).
 
-    Returns a list of 24 positive numbers, or None if any hour is
-    missing or non-positive (e.g. the GTA VI pre-release comparable,
-    which has no release day yet).
+    start_offset 0 -> release day (hours 1..24); 24 -> day 2; 48 ->
+    day 3.  Returns a list of 24 positive numbers, or None if any hour
+    is missing or non-positive.
     """
     day_start = comp.get("day_start")
     hourly = comp.get("hourly")
@@ -185,13 +204,23 @@ def release_day_curve(comp: dict):
     start = datetime.datetime(y, m, d, tzinfo=datetime.timezone.utc)
     vals = []
     for h in range(24):
-        t = start + datetime.timedelta(hours=h)
+        t = start + datetime.timedelta(hours=start_offset + h)
         key = t.strftime("%Y-%m-%dT%H:00:00Z")
         v = by_from.get(key)
         if v is None or v <= 0:
             return None
         vals.append(v)
     return vals
+
+
+def release_day_curve(comp: dict):
+    """A comparable's 24 hourly viewer counts for its release day (UTC).
+
+    Returns a list of 24 positive numbers, or None if any hour is
+    missing or non-positive (e.g. the GTA VI pre-release comparable,
+    which has no release day yet).
+    """
+    return curve_hours(comp, 0)
 
 
 def fit_params(curves, x0, plats=None):
@@ -230,6 +259,66 @@ def fit_params(curves, x0, plats=None):
     return params
 
 
+def fit_circadian_params(curves, day2s, day3s, x0, plats=None):
+    """Circadian-decomposed location + spread (v4).
+
+    For each comparable, z_{i,h} = ln(y_{i,h}/y_{i,1}) is split into a
+    steady-state circadian wave C_{i,h} (mean of the same clock hour's
+    log-ratios on day 2 and day 3) and a transient T_{i,h} = z - C.
+    C_hat_h is the kernel-weighted mean of C_{i,h}; the transient is
+    fit by kernel-weighted ridge regression on ln(h1/REF) (ridge 1.0);
+    the spread is 0.7x the transient residual SD, clamped to
+    [0.25, 1.0].  Same kernel (bw 2.0) and PC weight as fit_params.
+
+    Returns {h: (med_log_h, 0.0, spread_h)} -- the (a, b, sd) shape
+    hour_quantiles expects, with b = 0 because med_log is already the
+    location at this case's own x0 -- or None when too few curves
+    have complete day-2/day-3 data.
+    """
+    if len(curves) < MIN_CURVES:
+        return None
+    n = len(curves)
+    xs = [math.log(v[0] / REF) for v in curves]
+    ws = [math.exp(-0.5 * ((x - x0) / KERNEL_BW) ** 2) for x in xs]
+    if plats is not None:
+        ws = [w * (PC_WEIGHT if "PC" in (p or "") else 1.0)
+              for w, p in zip(ws, plats)]
+    sw = sum(ws)
+    mx = sum(w * x for w, x in zip(ws, xs)) / sw
+    sxx = sum(w * (x - mx) ** 2 for w, x in zip(ws, xs)) + 1.0
+    # C_{i,h} and T_{i,h} per comparable
+    c_all = []
+    t_all = []
+    for i in range(n):
+        c_row = []
+        t_row = []
+        for h in range(2, 25):
+            z = math.log(curves[i][h - 1] / curves[i][0])
+            c = 0.5 * (math.log(day2s[i][h - 1] / day2s[i][0])
+                       + math.log(day3s[i][h - 1] / day3s[i][0]))
+            c_row.append(c)
+            t_row.append(z - c)
+        c_all.append(c_row)
+        t_all.append(t_row)
+    params = {}
+    for hi in range(23):
+        h = hi + 2
+        c_hat = sum(w * c_all[i][hi] for i, w in enumerate(ws)) / sw
+        mt = sum(w * t_all[i][hi] for i, w in enumerate(ws)) / sw
+        sxt = sum(w * (xs[i] - mx) * (t_all[i][hi] - mt)
+                  for i, w in enumerate(ws))
+        b = sxt / sxx
+        a = mt - b * mx
+        med_log = c_hat + a + b * x0
+        res = [t_all[i][hi] - (a + b * xs[i]) for i in range(n)]
+        var = sum(w * r * r for w, r in zip(ws, res)) / sw
+        # Return the RAW residual SD: hour_quantiles applies
+        # SPREAD_MULT and the [0.25, 1.0] clamp itself (as it does for
+        # fit_params).  Applying them here too would double-count 0.7x.
+        params[h] = (med_log, 0.0, math.sqrt(var))
+    return params
+
+
 def hour_quantiles(p1: float, h: int, params):
     """Five quantiles for hour h given hour-1 print p1."""
     x = math.log(max(p1, 1.0) / REF)
@@ -263,12 +352,30 @@ def forecast_case(case: dict, name: str) -> dict:
     p1 = max(1.0, float(first["viewers"]))
     curves = []
     plats = []
+    curves_c = []  # release-day curves of comps with complete day 2+3
+    day2s = []
+    day3s = []
+    plats_c = []
     for comp in case.get("comparables") or []:
         vals = release_day_curve(comp)
         if vals is not None:
             curves.append(vals)
             plats.append(comp.get("platforms") or "")
-    params = fit_params(curves, math.log(max(p1, 1.0) / REF), plats)
+            d2 = curve_hours(comp, 24)
+            d3 = curve_hours(comp, 48)
+            if d2 is not None and d3 is not None:
+                curves_c.append(vals)
+                day2s.append(d2)
+                day3s.append(d3)
+                plats_c.append(comp.get("platforms") or "")
+    x0 = math.log(max(p1, 1.0) / REF)
+    # Prefer the circadian fit (v4); fall back to the v3 regression
+    # when too few comparables have complete day-2/day-3 curves.
+    params = None
+    if len(day2s) >= MIN_CURVES:
+        params = fit_circadian_params(curves_c, day2s, day3s, x0, plats_c)
+    if params is None:
+        params = fit_params(curves, x0, plats)
     hours = [
         {"hour": row["hour"], "q": hour_quantiles(p1, row["hour"], params)}
         for row in case["forecast"]

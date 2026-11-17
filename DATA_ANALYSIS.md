@@ -380,3 +380,74 @@ shipped. A genuinely new signal would have to come from outside the
 comparables' own curves (e.g. a better model of the unlock wave
 itself, or the GTA VI pre-release series' shape rather than its
 peak).
+
+## §9 — v4 (17 Nov ~17:40-18:00 WIB): Grok + Gemini ideas (harness exp4.py)
+
+Gate: must beat v3 on practice (0.1534) AND LOOCV (0.3958). Verified:
+all 37 complete comparables carry full 72h of hourly data after
+day_start, so the Day 2-3 circadian idea is implementable at runtime.
+
+| change | practice | LOOCV mean | LOOCV 20k | ROLL | verdict |
+|---|---:|---:|---:|---:|---:|
+| v3 (shipped) | 0.1534 | 0.3958 | 0.2763 | 0.4414 | baseline |
+| Grok peak-anchored (floor) | 0.1827 | 0.4959 | 0.3285 | 0.5596 | REJECT (both) |
+| Grok peak-anchored (no floor) | 0.3140 | 0.5999 | 0.4709 | 0.5852 | REJECT |
+| Grok peak + slope on shape | 0.1662 | 0.4336 | 0.3033 | 0.4808 | REJECT |
+| Grok peak Student-t6 | 0.1832 | 0.4830 | 0.3227 | 0.5443 | REJECT |
+| Gemini two-wave (floor) | 0.1655 | 0.4017 | 0.2661 | 0.4487 | REJECT (practice) |
+| Gemini two-wave (no floor) | 0.1847 | 0.3908 | 0.2513 | 0.4530 | REJECT (practice) |
+| Gemini two-wave ff 0.85 / 1.0 | 0.1835/0.1763 | 0.3917/0.3955 | 0.2525/0.2577 | 0.4530/0.4519 | REJECT (practice) |
+| Blend v3 + two-wave 0.15/0.2/0.3/0.5 | 0.1542/0.1545/0.1551/0.1572 | 0.3948/0.3947/0.3945/0.3951 | — | 0.4402/0.4400/0.4399/0.4406 | REJECT (practice, by a hair) |
+| Gemini mixture EM plain/kernel | 0.2059/0.1951 | 0.5045/0.4909 | 0.2872/0.2760 | 0.5716/0.5562 | REJECT (both, decisively) |
+| Gemini conformal on circadian | 0.1830 | 0.3768 | 0.2630 | 0.4225 | REJECT (practice) |
+| Gemini conformal on v3 | 0.1849 | 0.3761 | 0.2634 | 0.4216 | REJECT (practice) |
+| Conformal recentered on circ/v3 | 0.1697/0.1728 | 0.3903/0.3895 | 0.2798/0.2796 | 0.4321/0.4316 | REJECT (practice) |
+| Conformal-RC blend 0.25/0.5/0.75 | 0.1567/0.1607/0.1650 | 0.3920/0.3902/0.3894 | 0.2747/0.2755/0.2771 | 0.4362/0.4334/0.4317 | REJECT (practice) |
+| Gemini SHASH / noPC / nofloor | 0.1714/0.1734/0.1925 | 0.3871/0.3855/0.3721 | 0.2733/0.2755/0.2510 | 0.4230/0.4208/0.4274 | REJECT (practice) |
+| Blend v3 + SHASH 0.3/0.5 | 0.1580/0.1615 | 0.3883/0.3861 | 0.2731/0.2721 | 0.4303/0.4261 | REJECT (practice) |
+| Blend circadian + two-wave 0.5 | 0.1571 | 0.3953 | 0.2690 | 0.4411 | REJECT (practice) |
+| **Gemini circadian both (smooth)** | **0.1532** | **0.3950** | **0.2744** | **0.4404** | **SHIP candidate** |
+| **Gemini circadian both (nosmooth)** | **0.1532** | **0.3949** | **0.2743** | **0.4403** | **SHIP** |
+| Circadian d2 only / d3 only | 0.1564/0.1538 | 0.3923/0.3953 | 0.2725/0.2746 | 0.4374/0.4411 | REJECT (practice) |
+| Circadian spread 0.6 / 0.8 | 0.1479/0.1603 | 0.4053/0.3888 | 0.2803/0.2714 | 0.4512/0.4338 | REJECT (one gate each) |
+| Circadian ff 1.0 / 1.3 | 0.1616/0.1510 | 0.3885/0.4055 | 0.2651/0.2892 | 0.4414/0.4397 | REJECT (one gate each) |
+| Circadian bw 1.5 / 2.5, pc 0.5/0.7/0.8 | 0.1579/0.1551, 0.1535/0.1533/0.1535 | 0.4004/0.3967, 0.3952/0.3951/0.3953 | — | — | REJECT (practice) |
+| Blend v3 + circadian 0.5/0.7 | 0.1532/0.1532 | 0.3951/0.3950 | 0.2752/0.2749 | 0.4405/0.4403 | same as circadian alone |
+
+Why circadian ships: the only new direction that wins on practice AND
+LOOCV AND the rolling and h1>=20k subsets. Per-case LOOCV: 21/37
+pseudo-cases improve, median delta -0.0018. Mechanism: Day 2/3 curves
+strip the steady-state circadian wave out of the launch-day log-ratio,
+leaving a smoother transient to regress on hour-1 size — genuinely new
+signal (hours 25..72 were unused by v2/v3).
+
+Why the others fail the same way: every structured model (peak anchor,
+two-wave, mixture EM, conformal, SHASH) wins LOOCV by a wide margin
+(0.372-0.391) but loses practice (0.157-0.206). The practice cases are
+a different subpopulation (recent prestige rolling-midnight console
+launches) that v3's per-hour free regression + floor fits well; the
+structured models regularize that fit away. Diagnosis of the conformal
+failure: pooled inner-LOOCV standardized residuals have a negative
+median (-0.27..-0.38 every hour) because the WLS location estimates
+the MEAN of the right-skewed log-ratios, not the median — the raw
+conformal wrapper shifts every median down ~0.3 SD. Recentering fixes
+the location but the pooled shape is still too wide for the
+well-predicted practice cases.
+
+Implementation note (v4 main.py): fit_circadian_params returns
+(med_log, 0.0, raw_resid_sd) per hour; hour_quantiles applies
+SPREAD_MULT and the clamp itself. An earlier draft applied the
+multiplier inside the fit AND in hour_quantiles (0.49x total) —
+caught by comparing shipped main.py output against the harness
+(0.1439/0.4219 before the fix, 0.1532/0.3949 after). Always verify
+through the shipped main.py, never the harness alone.
+
+Final-case sanity check (synthetic h1 = 1.0M): v4 h20 median 1.67M
+(q05 0.94M, q95 2.95M) — same as v3, as expected from a small change.
+Runtime 0.28 s/case (limit 8 s).
+
+**Shipped v4: practice 0.1532, LOOCV 0.3949, rolling LOOCV 0.4403**
+(v3: 0.1534 / 0.3958 / 0.4414). Gap to rank 20 (0.120) is still 0.033;
+to rank 1 (0.0975) 0.056. Every direction from Grok + Gemini is now
+tested: only circadian shipped. What is left is a genuinely new signal
+class (e.g. modelling the unlock wave itself) or accepting v4 as final.
