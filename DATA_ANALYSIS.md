@@ -461,3 +461,185 @@ still 0.033; to rank 1 (0.0975) 0.056. Every direction from Grok +
 Gemini is now tested: only circadian passed the dual gate. What is
 left is a genuinely new signal class (e.g. modelling the unlock wave
 itself) or accepting v4 as final.
+
+## §10 — v5 (17 Nov ~18:15-18:50 WIB): pre-release dip signal + per-hour calibration (harness exp5.py)
+
+Diagnostics first (v4 loss decomposition on the 4 practice cases):
+oracle-median (keep spread) practice = 0.0890; oracle-median +
+oracle-spread = 0.0403. So even a perfect median leaves 0.0890 of
+spread loss, and rank 1 (0.0975) sits just above that floor — its
+medians are near-perfect on practice. Median residuals: h2–h4 ≈
+-0.12, h5 +0.561, h6 +0.288, h18 +0.308, h19–24 +0.14..+0.22.
+Worst per-hour losses: h5 (0.2702), h12 (0.2315), h18 (0.2029).
+
+New signal — pre-release dip: s_i = ln(pre168_i / premax_i), the mean
+hourly viewership over the 168h before release divided by the
+pre-release hourly maximum. A category that was quiet before release
+relative to its pre-release peak (deep dip: trailer spike, otherwise
+quiet) rises much more on launch day: corr(ln(pre168/premax),
+ln(peak/h1)) = -0.613 (n=37). Added as a second regressor in the
+circadian transient fit (ridge 2.0 on its coefficient only). GTA VI
+s\* = -7.32 (premax 1,418,094 from the Extended Look premiere vs
+pre168 mean 940) — beyond the comparables' range (min -6.81
+Silksong, median -2.62, max -1.22 Diablo IV); practice s\*:
+-3.03, -2.80, -2.82, -2.78. The ridge keeps the adjustment bounded
+and the floor caps the downside.
+
+Per-hour calibration: CAL_BIAS = median per-hour log residual of the
+pre-dip model on the 4 practice cases, applied at shrink 0.5.
+Systematic pattern: under-predicts the 05:00Z US-East unlock jump
+(+0.47 at h5) and the evening peak, over-predicts the midday lull.
+
+| change | practice | LOOCV mean | LOOCV 20k | ROLL | verdict |
+|---|---:|---:|---:|---:|---:|
+| v4 | 0.1532 | 0.3949 | 0.2743 | 0.4403 | baseline |
+| pre_dip ridge 2.0 | 0.1391 | 0.3835 | 0.2652 | 0.4256 | PASS dual gate |
+| **pre_dip + CAL 0.5 (candidate 1)** | **0.1301** [0.1264, 0.1573, 0.0896, 0.1470] | **0.3866** | **0.2666** | **0.4292** | **SHIP candidate (superseded in §11)** |
+| pre_dip + CAL 0.3 | 0.1331 | 0.3847 | — | — | frontier |
+| pre_dip + CAL 0.5 + SPREAD 0.55 | 0.1196 | 0.4053 | — | — | frontier (practice < rank 20) |
+| pre_dip + CAL 0.3 + SPREAD 0.6 (candidate 2) | 0.1260 | 0.3958 | — | — | frontier |
+| pre_dip + CAL 0.4 + SPREAD 0.6 | 0.1242 | 0.3967 | — | — | frontier |
+| pre_dip + CAL 0.5 + SPREAD 0.6 | 0.1228 | 0.3979 | — | — | frontier |
+| pre_dip + CAL 0.4 + SPREAD 0.55 | 0.1211 | 0.4041 | — | — | frontier |
+| pre_dip + conf 0.2 / shash 0.2 | 0.1454 / 0.1430 | 0.3738 / 0.3736 | — | — | best LOOCV, practice worse than pre_dip alone |
+| DST regressor | 0.1532–0.1537 | 0.3988–0.4039 | — | — | REJECT (dead end) |
+| smooth-coefficient SMOOTH-Z / SMOOTH-T | 0.1540 / 0.1537 | 0.3983 / 0.3968 | — | — | REJECT (dead end) |
+| 2-D local-linear (premax coord) | 0.1550–0.1565 | — | — | — | REJECT (dead end) |
+| slope shrink (0.19/0.57) | 0.19 | 0.57 | — | — | REJECT (catastrophic) |
+| pre24_ratio / pre168_24 / premax_ratio | 0.1594 / 0.1428 / 0.1526 | 0.4305 / 0.3908 / 0.4297 | — | — | REJECT |
+| roll blend / PC 0.4 / hour-group bw / CAL-gated | — | — | — | — | REJECT (neutral or worse) |
+| circ + conf/shash blends 0.1/0.2 | — | — | — | — | REJECT (practice worse than v4) |
+| transient ridge 0.5 | 0.1531 | 0.3945 | — | — | marginal dual-gate pass, negligible |
+
+Port bug found & fixed: comparables' pre168 must use the TIME
+window [day0-168h, day0), not the last 168 rows (max |Δs| was 0.68
+for Ghost of Tsushima). After the fix, practice matched the harness
+exactly (0.1301). The target's pre168 stays as last-168-rows
+(matches the harness; targets' s\* matched exactly).
+
+**Candidate 1 was ported to main.py and practice-verified EXACT
+(0.1301), but its LOOCV-through-main.py initially read 0.4259 vs
+the harness 0.3866 — because loocv_main.py's pseudo-cases had no
+`history_hourly`, so s\* fell back to the comparables' mean. Fixed
+in v5b (§11) by injecting each held-out comp's pre-release hourly
+rows into its pseudo-case; after the fix main.py LOOCV = 0.3870 vs
+harness 0.3866. Candidate 1 is SUPERSEDED in §11: its
+rolling-subset LOOCV (0.4405) is worse than v4's (0.4378).**
+
+## §11 — v5b (17 Nov ~18:55-19:30 WIB): Gemini v5 ideas (harness exp6.py)
+
+Gemini v5 answer file (~/workspace/makefun/gta6-gemini-answer-v5.md)
+is a 39-line SUMMARY with NO code blocks (0 `def`, 0 fences) — the
+four ideas were implemented here from the formulas + parameters
+stated in it (alpha_sh=0.65, ridge=1.5, bw1=2.0, bw2=1.2, lam1=1.5,
+lam2=4.0, tau_base=1.5, tau_extrap=2.5, log-return ridge 1.5
+transition / 18.0 outside, clamp 0.16 for h<=8, S_rm threshold
+0.05). Where the summary left a choice open (tail function for the
+prior, dip ridge, Psi mean-vs-median), the choice is documented in
+exp6.py.
+
+REVISED GATE (Gemini v5): practice <= 0.145 AND rolling-subset
+LOOCV DOWN vs v4 AND global LOOCV <= 0.415. The rolling subset is
+S_i^rm = z_{i,5} - z_{i,3} = ln(y5/y3) > 0.05 (the US-East midnight
+surge; n=15 of 37), reported alongside the weighted LOOCV with
+w = max(S_rm, 0). v4 subset baseline: RMsub 0.4378, RMw 0.4238.
+The old dual gate (practice < 0.1532 AND global LOOCV < 0.3949) is
+still reported for every candidate.
+
+Step 2 check (DONE): the test-case input DOES provide the
+pre-release hour array — every practice case has `history_hourly`
+(167-330 rows, ending at the h1 hour) and the GTA VI target comp
+has 632 hourly rows. So Idea B (2-D local-linear, median-7d lift)
+was live — and then rejected on the numbers (below).
+
+| change | practice | LOOCV | RMsub | RMw | verdict |
+|---|---:|---:|---:|---:|---:|
+| v4 | 0.1532 | 0.3949 | 0.4378 | 0.4238 | baseline |
+| C1 (v5 candidate 1) | 0.1301 | 0.3866 | 0.4405 | 0.4337 | FAILS revised gate (subset UP) |
+| G0 pre_dip | 0.1391 | 0.3835 | 0.4355 | 0.4316 | subset barely down |
+| G1 pre_dip + clamp 0.16 (h<=8) | 0.1390 | 0.3835 | 0.4355 | 0.4316 | clamp NEUTRAL — dropped (floor almost never binds) |
+| G3 pre_dip + A (slope-decay) | 0.1386 | 0.3791 | 0.4255 | 0.4233 | A WORKS (subset -0.010) |
+| G5 pre_dip + D (rolling prior) | 0.1391 | 0.3795 | 0.4263 | 0.4227 | D WORKS (subset -0.009) |
+| G7 pre_dip + A + D + CAL0.5 + clamp0.16 | 0.1292 | 0.3805 | 0.4251 | 0.4184 | PASS both gates |
+| G8 v4 + A + D + clamp0.16 (Step 1 literal) | 0.1526 | 0.3924 | 0.4315 | 0.4183 | FAILS revised practice <= 0.145 |
+| G9 v4 + A / G10 v4 + D | 0.1528 / 0.1515 | 0.3938 / 0.3948 | 0.4315 / 0.4341 | — | A/D alone on v4: small gains |
+| G11 pre_dip + C (dip-depth) | 0.1391 | 0.3898 | 0.4391 | 0.4336 | C HURTS LOOCV |
+| G12 pre_dip + C + CAL0.5 | 0.1279 | 0.3942 | 0.4435 | 0.4351 | FAILS revised gate (subset UP) |
+| G13 B 2-D local-linear (bw2=1.2) | 0.2175 | 0.4212 | 0.4737 | 0.4388 | REJECT decisively (p00 0.4285) |
+| H12/H13 B bw2=3.0/2.0 | 0.1571 / 0.1751 | 0.3912 / 0.3968 | 0.4548 / 0.4560 | — | REJECT |
+| H21/H22 B-ridge (x1,x2) / +CAL0.5 | 0.1503 / 0.1380 | 0.3983 / 0.4039 | 0.4601 / 0.4605 | — | REJECT |
+| H15/H16/H17 Psi diurnal shape | 0.2761 / 0.2605 / 0.2603 | 0.5398 / 0.5528 / 0.5473 | 0.7928 / 0.8034 / 0.7881 | — | REJECT (catastrophic) |
+| H18/H19 logret-T / logret-z | 0.1570 / 0.1575 | 0.4126 / 0.4162 | 0.4948 / 0.5072 | — | REJECT |
+| H5 A + D (no CAL) | 0.1389 | 0.3765 | 0.4191 | 0.4159 | LOOCV/subset champion |
+| H2/H3/H1 A + D + CAL 0.3/0.4/0.5 | 0.1327 / 0.1311 / 0.1296 | 0.3781 / 0.3791 / 0.3804 | 0.4224 / 0.4237 / 0.4253 | 0.4171 / 0.4177 / 0.4186 | frontier |
+| H4 A + D + CAL0.6 | 0.1283 | 0.3820 | 0.4272 | 0.4197 | frontier |
+| H10 A + D + C + CAL0.5 | 0.1268 | 0.3891 | 0.4305 | 0.4217 | PASS both gates (practice champion ex-SPREAD) |
+| I1/I2 A + D + CAL 0.35/0.45 | 0.1319 / 0.1303 | 0.3786 / 0.3797 | 0.4230 / 0.4244 | — | frontier |
+| **I10 A + D + CAL0.4 + sRidge4.0** | **0.1321** | **0.3766** | **0.4163** | **0.4122** | **SHIP** |
+| J4 A + D + sRidge4.0 (no CAL) | 0.1403 | 0.3735 | 0.4128 | 0.4110 | conservative alternative (no practice-fit constants) |
+| J1/J2/J3 sRidge 3.0/6.0/8.0 + CAL0.4 | 0.1315 / 0.1330 / 0.1338 | 0.3773 / 0.3766 / 0.3774 | 0.4190 / 0.4137 / 0.4129 | — | ridge optimum flat at 4-6 |
+| J5/J6 sRidge4.0 + CAL 0.3/0.5 | 0.1338 / 0.1305 | 0.3755 / 0.3780 | 0.4152 / 0.4175 | — | frontier |
+| I3 A + D + CAL0.4 + SPREAD0.6 | 0.1236 | 0.3900 | 0.4335 | 0.4288 | PASS both gates (thin subset margin) |
+| I4 A + D + CAL0.4 + SPREAD0.65 | 0.1273 | 0.3841 | 0.4282 | 0.4228 | PASS both gates |
+| **I5 A + D + CAL0.5 + SPREAD0.6** | **0.1221** | **0.3914** | **0.4353** | **0.4298** | **frontier extreme (practice champion; subset margin only 0.0025)** |
+| I6 A + D + CAL0.3 + SPREAD0.6 | 0.1255 | 0.3889 | 0.4320 | 0.4281 | PASS both gates |
+| I7 A + D + SPREAD0.6 (no CAL) | 0.1332 | 0.3872 | 0.4286 | 0.4272 | PASS both gates |
+| I8 A + D + C + CAL0.4 | 0.1286 | 0.3876 | 0.4289 | 0.4208 | PASS both gates |
+
+Why the winners win. Idea A: the raw transient slopes decay
+smoothly and monotonically (0.00 at h2 to about -0.61 at h20), so
+shrinking each hour's slope 65% toward the fitted exponential decay
+curve removes estimation noise without biasing the shape
+(alpha_sh 0.5/0.8 are flat — not a knife edge). Idea D: the
+Tikhonov prior (a0, b0) from the rolling subset, b0 floored at
+-0.65, with precision tau0 = 1.5 + 2.5*tail(x\*) only bites when
+the target's hour-1 print is in the right tail of launch sizes —
+exactly where the non-parametric fit loses support (GTA VI).
+Practice-case tails: 0.00, 0.00, 0.34 (GoW), 0.00. Stronger ridge
+on the s coefficient (4.0 vs 2.0) dominates 2.0 on all three
+metrics — the dip signal is real but its coefficient was overfit.
+
+Why Idea B failed. x2 = ln(p1/med7d) has median 5.47 (range
+-2.80..9.60) in our data, NOT Gemini's claimed +1.5..+2.8
+(rolling) / +3.5..+5.5 (simultaneous): the lift ratio is dominated
+by how quiet the pre-release baseline is, not by the unlock
+regime. The target's x2 sits in a sparse region, so the 2-D
+local-linear (bw2=1.2) collapses (Wolverine p00: 0.4285). Wider
+bw2 (2.0/3.0) and a global ridge on (x1, x2) also fail — the lift
+ratio does not separate regimes here. (Rank #15's "2-D
+local-linear" must use a different second coordinate.)
+
+Why Psi failed catastrophically. Pre-release hourly viewers are
+tiny (often 0-5) and the 00:00 reference hour is frequently ~0/1,
+so ln(v_H/v_0) is noise-dominated; subtracting that "diurnal
+shape" from z destroys the signal (RMsub 0.79). The idea would
+need a smoothed/pooled diurnal profile, not a per-game one.
+
+Why log-returns failed. Modelling g_h = z_h - z_{h-1} with a
+strong ridge outside the transition hours and integrating
+accumulates error hour over hour (RMsub 0.49-0.51) — the per-hour
+independent fits were better.
+
+Why the clamp 0.16 was neutral. Gemini's theory was that the
+0.25 spread floor caused the 0.1316 in-sample floor — but the
+floor almost never binds (transient residual SDs are mostly >
+0.357), so lowering it to 0.16 for h<=8 changes nothing
+(G1 vs G0: 0.1390 vs 0.1391, LOOCV identical). Not used.
+
+Ship candidate I10 — verified through the shipped main.py:
+practice 0.1320 (harness 0.1321), LOOCV 0.3769 (harness 0.3766),
+subset S_rm>0.05 0.4136 (harness 0.4163), weighted-LOOCV 0.4138,
+20k 0.2673, 150k 0.2448, rolling 0.4168. The 0.0027 subset gap
+between main.py and the harness is the pre168 definition: the
+harness uses the strict [day0-168h, day0) window, main.py the last
+168 history rows, which for sparse-history comps reaches further
+back. Immaterial to the decision; the shipped numbers are the ones
+above. I10 beats v4 on all three metrics (practice -0.021, global
+-0.018, subset -0.022) and beats candidate 1 on global (-0.010)
+and subset (-0.024) for +0.002 practice. Gap remaining: to rank 20
+(0.120) 0.012, to rank 1 (0.0975) 0.035. The oracle-median floor
+(0.0890, §10) still binds — further gains need a better location
+model, not spread. Bundle: ~/workspace/makefun/gta6-bundle-v5b.tar.gz
+(commit TBD at ship time). DO NOT SUBMIT without a quota check +
+explicit user decision (v4 retry cron fires 18 Nov 07:05 WIB —
+update it to v5b if v5b is chosen).
