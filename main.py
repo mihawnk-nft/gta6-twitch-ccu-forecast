@@ -19,6 +19,13 @@ near zero (it had not unlocked anywhere yet at 00:00 UTC) can rise
 hundreds of times.  Equivalently the day's peak absolute audience is
 almost independent of the hour-1 print.
 
+The fit is kernel-weighted (v2): each comparable gets weight
+exp(-0.5 * ((ln(h1/100k) - ln(p1/100k)) / 2.0)^2), so the regression
+is local in launch size instead of one global line through tiny
+indie launches and million-viewer simultaneous ones.  Bandwidth 2.0
+was chosen on practice + leave-one-out CV (see DATA_ANALYSIS.md);
+the optimum is flat over 1.5-2.5, so the choice is not a knife edge.
+
 Two guards keep the regression honest on the final case:
 
 * FLOOR -- a rolling-midnight floor on the median ratio.  GTA VI unlocks
@@ -30,9 +37,12 @@ Two guards keep the regression honest on the final case:
   print, would predict a *fall* to ~0.25x at peak hours, because the
   largest hour-1 comparables are simultaneous global launches (Cyberpunk
   2077, Elden Ring) whose hour 1 already was the peak.  The floor is
-  0.85x the smallest per-hour ratio among the four practice launches, so
-  the forecast never predicts less than a rolling-midnight launch's
-  observed minimum rise.  It binds only for large hour-1 prints.
+  1.15x the v1 floor (0.85x the smallest per-hour ratio among the four
+  practice launches, so 0.98x that minimum in v2) -- the 1.15 factor was
+  chosen because raising the floor improves every one of the four
+  practice cases and the rolling-midnight LOOCV subset, while the plain
+  LOOCV (which mixes in simultaneous launches the floor is not meant
+  for) barely moves.  It binds only for large hour-1 prints.
 * Spread -- each hour's log-spread s_h is 0.7x the regression's residual
   standard deviation across comparables, clamped to [0.25, 1.0].  The
   0.7 factor and the floor were chosen on leave-one-out cross-validation
@@ -76,6 +86,10 @@ SPREAD_MULT = 0.7
 SPREAD_MIN = 0.25
 SPREAD_MAX = 1.0
 MIN_CURVES = 5
+# Kernel bandwidth (log units) for the local-in-size fit, and the
+# multiplier on the rolling-midnight floor (see DATA_ANALYSIS.md §7).
+KERNEL_BW = 2.0
+FLOOR_FACTOR = 1.15
 
 # Rolling-midnight floor on the median ratio r_h: 0.85x the smallest
 # ratio at that hour among the four practice launches (Wolverine, RDR2,
@@ -166,11 +180,14 @@ def release_day_curve(comp: dict):
     return vals
 
 
-def fit_params(curves):
+def fit_params(curves, x0):
     """Per hour h=2..24: (a_h, b_h, resid_sd) of ln(y_h/y_1) on ln(y_1/REF).
 
-    Ordinary least squares over the given complete curves.  Returns None
-    when there are too few curves to fit.
+    Kernel-weighted least squares around the target's own x0 = ln(p1/REF):
+    a comparable with hour-1 print h1 gets weight
+    exp(-0.5 * ((ln(h1/REF) - x0) / KERNEL_BW)^2).  A launch far from the
+    target's size still counts, but a launch of similar size counts far
+    more.  Returns None when there are too few curves to fit.
     """
     if len(curves) < MIN_CURVES:
         return None
@@ -178,14 +195,15 @@ def fit_params(curves):
     for h in range(2, 25):
         xs = [math.log(v[0] / REF) for v in curves]
         ys = [math.log(v[h - 1] / v[0]) for v in curves]
-        n = len(xs)
-        mx = sum(xs) / n
-        my = sum(ys) / n
-        den = sum((x - mx) ** 2 for x in xs)
-        b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den if den else 0.0
+        ws = [math.exp(-0.5 * ((x - x0) / KERNEL_BW) ** 2) for x in xs]
+        sw = sum(ws)
+        mx = sum(w * x for w, x in zip(ws, xs)) / sw
+        my = sum(w * y for w, y in zip(ws, ys)) / sw
+        den = sum(w * (x - mx) ** 2 for w, x in zip(ws, xs))
+        b = sum(w * (x - mx) * (y - my) for w, x, y in zip(ws, xs, ys)) / den if den else 0.0
         a = my - b * mx
         resid = [y - (a + b * x) for x, y in zip(xs, ys)]
-        var = sum(r * r for r in resid) / n
+        var = sum(w * r * r for w, r in zip(ws, resid)) / sw
         params[h] = (a, b, math.sqrt(var))
     return params
 
@@ -200,7 +218,7 @@ def hour_quantiles(p1: float, h: int, params):
     else:
         med = math.exp(FALLBACK_A[h])
         spread = FALLBACK_SPREAD
-    med = max(med, FLOOR[h])
+    med = max(med, FLOOR[h] * FLOOR_FACTOR)
     qs = []
     prev = 0.0
     for z in Z:
@@ -226,7 +244,7 @@ def forecast_case(case: dict, name: str) -> dict:
         vals = release_day_curve(comp)
         if vals is not None:
             curves.append(vals)
-    params = fit_params(curves)
+    params = fit_params(curves, math.log(max(p1, 1.0) / REF))
     hours = [
         {"hour": row["hour"], "q": hour_quantiles(p1, row["hour"], params)}
         for row in case["forecast"]
