@@ -109,6 +109,25 @@ def round2(x: float):
     return int(value) if value == int(value) else value
 
 
+def _hour_key(value):
+    """Normalize an hourly timestamp to 'YYYY-MM-DDTHH:00:00Z' (UTC).
+
+    The kit's comparables use that exact form, but a source that writes
+    '+00:00' offsets or non-zero minutes would otherwise silently drop
+    every hour of a curve.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    dt = dt.astimezone(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
+    return dt.strftime("%Y-%m-%dT%H:00:00Z")
+
+
 def release_day_curve(comp: dict):
     """A comparable's 24 hourly viewer counts for its release day (UTC).
 
@@ -123,7 +142,10 @@ def release_day_curve(comp: dict):
     by_from = {}
     for row in hourly:
         try:
-            by_from[row["from"]] = float(row["viewers"])
+            key = _hour_key(row["from"])
+            if key is None:
+                continue
+            by_from[key] = float(row["viewers"])
         except (KeyError, TypeError, ValueError):
             continue
     # day_start looks like "2022-02-25T00:00:00Z"; hours are +0..23h.
