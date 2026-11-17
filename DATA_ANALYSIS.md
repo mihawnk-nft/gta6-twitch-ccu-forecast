@@ -639,7 +639,11 @@ above. I10 beats v4 on all three metrics (practice -0.021, global
 and subset (-0.024) for +0.002 practice. Gap remaining: to rank 20
 (0.120) 0.012, to rank 1 (0.0975) 0.035. The oracle-median floor
 (0.0890, §10) still binds — further gains need a better location
-model, not spread. Bundle: ~/workspace/makefun/gta6-bundle-v5b.tar.gz
-(commit TBD at ship time). DO NOT SUBMIT without a quota check +
-explicit user decision (v4 retry cron fires 18 Nov 07:05 WIB —
-update it to v5b if v5b is chosen).
+model, not spread. BUNDLE: not built by the v5b subagent — the
+bundle command's dry-run finds 14 sessions including this
+subagent's (f3732b3b), but a subagent's usage rows attach only
+when its run completes, so the parent must run `makefun bundle`
+(with --muse-usage per its help) AFTER this run ends, from
+commit 9800267. DO NOT SUBMIT without a quota check + explicit
+user decision (v4 retry cron fires 18 Nov 07:05 WIB — update it
+to v5b if v5b is chosen).
